@@ -6,9 +6,13 @@
 #include "auth.h"
 
 // ESP32 constants
-const int ledPin = 2;
-const int buttonOn = 4;
-const int buttonOff = 5;
+const int onBoardLedPin = 2;
+const int greenLedPin = 18;
+const int yellowLedPin = 19;
+const int redLedPin = 21;
+
+const int buttonOn = 14;
+const int buttonOff = 13;
 
 unsigned long debounceDelay = 50;
 unsigned long lastOnPress = 0;
@@ -23,6 +27,16 @@ const char* serverUrl = "http://192.168.1.171:5000/api/esp32_led";
 // Local ESP32 server
 WebServer server(80);
 
+// ---------------- LED State Management ----------------
+void setStateLeds(bool state) {
+    digitalWrite(greenLedPin, state ? HIGH : LOW);
+    digitalWrite(redLedPin, state ? LOW : HIGH);
+}
+
+void setCommErrorLed(bool error) {
+    digitalWrite(yellowLedPin, error ? HIGH : LOW);
+}
+
 // ---------------- WiFi ----------------
 
 void connectWiFi() {
@@ -30,10 +44,12 @@ void connectWiFi() {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
 
     while (WiFi.status() != WL_CONNECTED) {
+        digitalWrite(onBoardLedPin, LOW);
         delay(300);
         Serial.print(".");
     }
 
+    digitalWrite(onBoardLedPin, HIGH);
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
@@ -41,6 +57,7 @@ void connectWiFi() {
 
 void ensureWiFi() {
     if (WiFi.status() != WL_CONNECTED) {
+        digitalWrite(onBoardLedPin, LOW);
         connectWiFi();
     }
 }
@@ -56,20 +73,23 @@ void syncStateFromServer() {
     if (code == 200) {
         String payload = http.getString();
         Serial.println("Sync response: " + payload);
-
+        
         StaticJsonDocument<128> doc;
         DeserializationError err = deserializeJson(doc, payload);
-
+        
         if (err) {
+            setCommErrorLed(true);
             Serial.print("JSON parse error: ");
             Serial.println(err.c_str());
             return;
         }
-
+        
+        setCommErrorLed(false);
         // Expecting: { "state": true } or { "state": false }
         bool state = doc["state"] | false;
-
-        digitalWrite(ledPin, state ? HIGH : LOW);
+        setStateLeds(state);
+    } else {
+        setCommErrorLed(true);
     }
 
     http.end();
@@ -84,7 +104,7 @@ void sendStateToServer(const char* state) {
     http.addHeader("Content-Type", "application/json");
 
     StaticJsonDocument<128> doc;
-    doc["state"] = state;  // "on" or "off"
+    doc["state"] = state;
 
     String body;
     serializeJson(doc, body);
@@ -96,8 +116,16 @@ void sendStateToServer(const char* state) {
     Serial.print(" -> ");
     Serial.println(code);
 
+    // Communication success = 200 OK
+    if (code == 200) {
+        setCommErrorLed(false);   // turn OFF yellow LED
+    } else {
+        setCommErrorLed(true);    // turn ON yellow LED
+    }
+
     http.end();
 }
+
 
 // ---------------- Receive broadcast from server ----------------
 
@@ -109,20 +137,23 @@ void handleLedUpdate() {
     DeserializationError err = deserializeJson(doc, body);
 
     if (err) {
+        setCommErrorLed(true);
         Serial.print("JSON parse error: ");
         Serial.println(err.c_str());
         server.send(400, "application/json", "{\"error\":\"invalid json\"}");
         return;
     }
 
+    setCommErrorLed(false);
+
     const char* state = doc["state"];
 
     if (strcmp(state, "on") == 0) {
-        digitalWrite(ledPin, HIGH);
+        setStateLeds(true);
         Serial.println("LED set to ON");
     } 
     else if (strcmp(state, "off") == 0) {
-        digitalWrite(ledPin, LOW);
+        setStateLeds(false);
         Serial.println("LED set to OFF");
     } 
     else {
@@ -136,7 +167,11 @@ void handleLedUpdate() {
 
 void setup() {
     Serial.begin(9600);
-    pinMode(ledPin, OUTPUT);
+    pinMode(onBoardLedPin, OUTPUT);
+    pinMode(greenLedPin, OUTPUT);
+    pinMode(yellowLedPin, OUTPUT);
+    pinMode(redLedPin, OUTPUT);
+
     pinMode(buttonOn, INPUT_PULLUP);
     pinMode(buttonOff, INPUT_PULLUP);
 
@@ -165,7 +200,7 @@ void loop() {
 
     // ON button: detect HIGH → LOW transition
     if (lastOnState == HIGH && onState == LOW && (now - lastOnPress > debounceDelay)) {
-        digitalWrite(ledPin, HIGH);
+        setStateLeds(true);
         sendStateToServer("on");
         lastOnPress = now;
         Serial.println("On button pressed...");
@@ -173,7 +208,7 @@ void loop() {
 
     // OFF button: detect HIGH → LOW transition
     if (lastOffState == HIGH && offState == LOW && (now - lastOffPress > debounceDelay)) {
-        digitalWrite(ledPin, LOW);
+        setStateLeds(false);
         sendStateToServer("off");
         lastOffPress = now;
         Serial.println("Off button pressed...");
