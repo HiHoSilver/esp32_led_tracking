@@ -29,8 +29,8 @@ WebServer server(80);
 
 // ---------------- LED State Management ----------------
 void setStateLeds(bool state) {
-    digitalWrite(greenLedPin, state ? HIGH : LOW);
-    digitalWrite(redLedPin, state ? LOW : HIGH);
+    digitalWrite(greenLedPin, state ? LOW : HIGH);
+    digitalWrite(redLedPin, state ? HIGH: LOW);
 }
 
 void setCommErrorLed(bool error) {
@@ -198,21 +198,22 @@ void loop() {
     bool onState  = digitalRead(buttonOn);
     bool offState = digitalRead(buttonOff);
 
-    // ON button: detect HIGH → LOW transition
-    if (lastOnState == HIGH && onState == LOW && (now - lastOnPress > debounceDelay)) {
-        setStateLeds(true);
-        sendStateToServer("on");
-        lastOnPress = now;
-        Serial.println("On button pressed...");
+    // RED button (buttonOff)
+    if (lastOffState == HIGH && offState == LOW && (now - lastOffPress > debounceDelay)) {
+        setStateLeds(true);                // turn LED ON
+        sendStateToServer("on");           // tell Flask to START timer
+        lastOffPress = now;
+        Serial.println("Red button pressed (TIMER ON)...");
     }
 
-    // OFF button: detect HIGH → LOW transition
-    if (lastOffState == HIGH && offState == LOW && (now - lastOffPress > debounceDelay)) {
-        setStateLeds(false);
-        sendStateToServer("off");
-        lastOffPress = now;
-        Serial.println("Off button pressed...");
+    // GREEN button (buttonOn)
+    if (lastOnState == HIGH && onState == LOW && (now - lastOnPress > debounceDelay)) {
+        setStateLeds(false);               // turn LED OFF
+        sendStateToServer("off");          // tell Flask to STOP timer
+        lastOnPress = now;
+        Serial.println("Green button pressed (TIMER OFF)...");
     }
+
 
     // Save states for next loop
     lastOnState  = onState;
